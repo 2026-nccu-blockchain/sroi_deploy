@@ -1,0 +1,39 @@
+services:
+  # 透過 Cloudflare Access 連到遠端資料庫的通道
+  db-tunnel:
+    image: cloudflare/cloudflared:latest
+    command:
+      - access
+      - tcp
+      - --hostname
+      - ${DB_TUNNEL_HOSTNAME}
+      - --url
+      - 0.0.0.0:15432                 # 一定要 0.0.0.0，api 容器才連得到
+    restart: unless-stopped
+
+  api:
+    build: ./sroi_backend
+    env_file:
+      - ./sroi_backend/.env
+    environment:
+      # 覆蓋 .env 裡的 localhost:15432，改成連 db-tunnel 容器
+      DATABASE_URL: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db-tunnel:15432/${DB_NAME}
+    volumes:
+      - uploads:/app/app/uploads     # 保存使用者上傳的檔案，重建容器也不會消失
+    depends_on:
+      - db-tunnel
+    restart: on-failure              # 通道還沒準備好時會自動重試
+
+  web:
+    build:
+      context: ./sroi_frontend
+      args:
+        VITE_API_BASE_URL: ""
+    ports:
+      - "80:80"                      # 唯一對外的入口
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  uploads:
