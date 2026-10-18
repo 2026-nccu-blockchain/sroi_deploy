@@ -1,30 +1,36 @@
 services:
-  db-tunnel:
-    image: cloudflare/cloudflared:latest
-    command:
-      - access
-      - tcp
-      - --hostname
-      - ${DB_TUNNEL_HOSTNAME}
-      - --url
-      - 0.0.0.0:15432
-    restart: unless-stopped
-
+  # db-tunnel:
+  #   image: cloudflare/cloudflared:latest
+  #   command:
+  #     - access
+  #     - tcp
+  #     - --hostname
+  #     - ${DB_TUNNEL_HOSTNAME}
+  #     - --url
+  #     - 0.0.0.0:15432
+  #   restart: unless-stopped
+  
   backend:
     build: ./sroi_backend
     environment:
       SECRET_KEY: ${SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM}
       JWT_EXPIRATION_MINUTES: ${JWT_EXPIRATION_MINUTES}
-      DATABASE_URL: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db-tunnel:15432/${DB_NAME}
+      # DATABASE_URL: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db-tunnel:15432/${DB_NAME}
+      DATABASE_URL: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       MAX_REQUESTS: ${MAX_REQUESTS}
       WINDOW_SECONDS: ${WINDOW_SECONDS}
       SROI_DEBUG: ${SROI_DEBUG:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_NAME: ${ADMIN_NAME:-管理員}
     volumes:
       - uploads:/app/app/uploads
     depends_on:
-      - db-tunnel
+      # - db-tunnel
+      db:
+        condition: service_healthy
     restart: on-failure
 
   frontend:
@@ -43,5 +49,38 @@ services:
       - backend
     restart: unless-stopped
 
+  pgadmin:
+    image: dpage/pgadmin4
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:18
+    ports:
+      - "127.0.0.1:15432:5432"
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d
+      - db_data:/var/lib/postgresql/18/docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
 volumes:
   uploads:
+  pgadmin_data:
+  db_data:
