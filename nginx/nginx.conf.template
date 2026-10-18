@@ -1,0 +1,38 @@
+server {
+    listen 80;
+    server_name ${SERVER_URL};
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # 面談檔案上限是 10MB，nginx 預設只有 1MB
+    client_max_body_size 12m;
+
+    location /api/ {
+        proxy_pass http://backend:8000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Vite 產出的檔名有 hash，可以長期快取
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # error_page 404 /404.html;
+    # location = /404.html {
+    #     root /usr/share/nginx/html;
+    # }
+
+    # error_page 500 503 /50x.html;
+    # location = /50x.html {
+    #     root /usr/share/nginx/html;
+    # }
+}

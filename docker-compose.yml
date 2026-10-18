@@ -1,5 +1,4 @@
 services:
-  # 透過 Cloudflare Access 連到遠端資料庫的通道
   db-tunnel:
     image: cloudflare/cloudflared:latest
     command:
@@ -8,31 +7,40 @@ services:
       - --hostname
       - ${DB_TUNNEL_HOSTNAME}
       - --url
-      - 0.0.0.0:15432                 # 一定要 0.0.0.0，api 容器才連得到
+      - 0.0.0.0:15432
     restart: unless-stopped
 
-  api:
+  backend:
     build: ./sroi_backend
-    env_file:
-      - ./sroi_backend/.env
     environment:
-      # 覆蓋 .env 裡的 localhost:15432，改成連 db-tunnel 容器
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      JWT_EXPIRATION_MINUTES: ${JWT_EXPIRATION_MINUTES}
       DATABASE_URL: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db-tunnel:15432/${DB_NAME}
+      MAX_REQUESTS: ${MAX_REQUESTS}
+      WINDOW_SECONDS: ${WINDOW_SECONDS}
+      SROI_DEBUG: ${SROI_DEBUG:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
     volumes:
-      - uploads:/app/app/uploads     # 保存使用者上傳的檔案，重建容器也不會消失
+      - uploads:/app/app/uploads
     depends_on:
       - db-tunnel
-    restart: on-failure              # 通道還沒準備好時會自動重試
+    restart: on-failure
 
-  web:
-    build:
-      context: ./sroi_frontend
-      args:
-        VITE_API_BASE_URL: ""
+  frontend:
+    build: ./sroi_frontend
+    environment:
+      SERVER_URL: ${SERVER_URL:-_}
+      # 只替換列出的變數，避免動到 $host、$remote_addr 這些 nginx 變數
+      # 多個變數時寫成 "^(SERVER_URL|OTHER_VAR)$"
+      NGINX_ENVSUBST_FILTER: "^(SERVER_URL)$"
+    volumes:
+      # 啟動時 envsubst 產生 /etc/nginx/conf.d/default.conf，同時蓋掉預設的設定
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
     ports:
-      - "80:80"                      # 唯一對外的入口
+      - "8080:80"
     depends_on:
-      - api
+      - backend
     restart: unless-stopped
 
 volumes:
