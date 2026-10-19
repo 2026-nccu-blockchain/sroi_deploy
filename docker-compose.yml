@@ -1,39 +1,86 @@
 services:
-  # 透過 Cloudflare Access 連到遠端資料庫的通道
-  db-tunnel:
-    image: cloudflare/cloudflared:latest
-    command:
-      - access
-      - tcp
-      - --hostname
-      - ${DB_TUNNEL_HOSTNAME}
-      - --url
-      - 0.0.0.0:15432                 # 一定要 0.0.0.0，api 容器才連得到
+  # db-tunnel:
+  #   image: cloudflare/cloudflared:latest
+  #   command:
+  #     - access
+  #     - tcp
+  #     - --hostname
+  #     - ${DB_TUNNEL_HOSTNAME}
+  #     - --url
+  #     - 0.0.0.0:15432
+  #   restart: unless-stopped
+  
+  backend:
+    build: ./sroi_backend
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      JWT_EXPIRATION_MINUTES: ${JWT_EXPIRATION_MINUTES}
+      # DATABASE_URL: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db-tunnel:15432/${DB_NAME}
+      DATABASE_URL: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      MAX_REQUESTS: ${MAX_REQUESTS}
+      WINDOW_SECONDS: ${WINDOW_SECONDS}
+      SROI_DEBUG: ${SROI_DEBUG:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_NAME: ${ADMIN_NAME:-管理員}
+    volumes:
+      - uploads:/app/app/uploads
+    depends_on:
+      # - db-tunnel
+      db:
+        condition: service_healthy
+    restart: on-failure
+
+  frontend:
+    build: ./sroi_frontend
+    environment:
+      SERVER_URL: ${SERVER_URL:-_}
+      # 只替換列出的變數，避免動到 $host、$remote_addr 這些 nginx 變數
+      # 多個變數時寫成 "^(SERVER_URL|OTHER_VAR)$"
+      NGINX_ENVSUBST_FILTER: "^(SERVER_URL)$"
+    volumes:
+      # 啟動時 envsubst 產生 /etc/nginx/conf.d/default.conf，同時蓋掉預設的設定
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
     restart: unless-stopped
 
-  api:
-    build: ./sroi_backend
-    env_file:
-      - ./sroi_backend/.env
-    environment:
-      # 覆蓋 .env 裡的 localhost:15432，改成連 db-tunnel 容器
-      DATABASE_URL: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db-tunnel:15432/${DB_NAME}
-    volumes:
-      - uploads:/app/app/uploads     # 保存使用者上傳的檔案，重建容器也不會消失
-    depends_on:
-      - db-tunnel
-    restart: on-failure              # 通道還沒準備好時會自動重試
-
-  web:
-    build:
-      context: ./sroi_frontend
-      args:
-        VITE_API_BASE_URL: ""
+  pgadmin:
+    image: dpage/pgadmin4
     ports:
-      - "80:80"                      # 唯一對外的入口
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
     depends_on:
-      - api
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:18
+    ports:
+      - "127.0.0.1:15432:5432"
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d
+      - db_data:/var/lib/postgresql/18/docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
 volumes:
   uploads:
+  pgadmin_data:
+  db_data:
